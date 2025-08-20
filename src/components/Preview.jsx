@@ -5,7 +5,7 @@ function FieldRenderer({ field, value, onChange, errors }) {
 
   if (field.type === "static") {
     return (
-      <div className="">
+      <div className="p-3 bg-gray-50 rounded border">
         <div className="font-semibold">{field.label || "Section"}</div>
         {field.text && (
           <div className="text-sm text-gray-700 mt-1 whitespace-pre-wrap">
@@ -140,18 +140,231 @@ function FieldRenderer({ field, value, onChange, errors }) {
   );
 }
 
-export default function Preview({ schema, values, onValuesChange }) {
+// read nested message like data.message or error.detail
+function getByPath(obj, path) {
+  if (!path) return undefined;
+  return path
+    .split(".")
+    .reduce((acc, k) => (acc && acc[k] != null ? acc[k] : undefined), obj);
+}
+
+// replace {{field_id}} tokens with current values
+function applyTemplate(str, values) {
+  if (!str) return "";
+  return str.replace(/\{\{([^}]+)\}\}/g, (_, key) => {
+    const v = values[key.trim()];
+    if (v == null) return "";
+    if (Array.isArray(v)) return v.join(", ");
+    if (typeof v === "object") return JSON.stringify(v);
+    return String(v);
+  });
+}
+
+// helper: build an “empty” values object for the current schema
+function buildClearedValues(schema) {
+  const cleared = {};
+  for (const f of schema) {
+    switch (f.type) {
+      case "text":
+      case "textarea":
+      case "date":
+        cleared[f.id] = "";
+        break;
+      case "radio":
+        cleared[f.id] = ""; // nothing selected
+        break;
+      case "select":
+        cleared[f.id] = f.multiple ? [] : "";
+        break;
+      case "checkbox":
+        cleared[f.id] = [];
+        break;
+      case "file":
+        cleared[f.id] = []; // we’ll also remount the form to clear native FileList
+        break;
+      // static has no value
+      default:
+        cleared[f.id] = null;
+    }
+  }
+  return cleared;
+}
+
+function computeErrors(schema, values) {
+  const errs = {};
+  for (const f of schema) {
+    if (f.type === "static") continue;
+    const v = values[f.id];
+
+    // Required
+    if (f.isRequired) {
+      const empty =
+        v == null ||
+        (typeof v === "string" && v.trim() === "") ||
+        (Array.isArray(v) && v.length === 0);
+      if (empty) {
+        errs[f.id] = "This field is required.";
+        continue;
+      }
+    }
+
+    // Type-specific
+    if (f.type === "text" && f.inputType === "email" && v) {
+      const ok = /\S+@\S+\.\S+/.test(v);
+      if (!ok) errs[f.id] = "Please enter a valid email.";
+    }
+
+    if (f.type === "date" && v) {
+      if (f.minDate && v < f.minDate)
+        errs[f.id] = `Date should be on or after ${f.minDate}.`;
+      if (f.maxDate && v > f.maxDate)
+        errs[f.id] = `Date should be on or before ${f.maxDate}.`;
+    }
+
+    if (f.type === "file" && Array.isArray(v) && v.length) {
+      const max = (f.maxSizeMB ?? 5) * 1024 * 1024;
+      for (const file of v) {
+        if (file.size > max) {
+          errs[f.id] = `File ${file.name} exceeds ${f.maxSizeMB}MB.`;
+          break;
+        }
+        if (f.accept) {
+          const accepts = f.accept
+            .split(",")
+            .map((s) => s.trim().toLowerCase())
+            .filter(Boolean);
+          const ok = accepts.some((a) => {
+            if (a.includes("/"))
+              return (file.type || "").toLowerCase().startsWith(a);
+            if (a.startsWith(".")) return file.name.toLowerCase().endsWith(a);
+            return false;
+          });
+          if (accepts.length && !ok) {
+            errs[f.id] = `File ${file.name} is not an accepted type.`;
+            break;
+          }
+        }
+      }
+    }
+  }
+  return errs;
+}
+
+function computeFieldError(field, values) {
+  if (!field || field.type === "static") return undefined;
+
+  const v = values[field.id];
+
+  // Required
+  if (field.isRequired) {
+    const empty =
+      v == null ||
+      (typeof v === "string" && v.trim() === "") ||
+      (Array.isArray(v) && v.length === 0);
+    if (empty) return "This field is required.";
+  }
+
+  // Type-specific
+  if (field.type === "text" && v) {
+    if (field.inputType === "email") {
+      const ok = /\S+@\S+\.\S+/.test(v);
+      if (!ok) return "Please enter a valid email.";
+    }
+    // add more inputType checks here if you want (number, url, tel, etc.)
+  }
+
+  if (field.type === "date" && v) {
+    if (field.minDate && v < field.minDate)
+      return `Date should be on or after ${field.minDate}.`;
+    if (field.maxDate && v > field.maxDate)
+      return `Date should be on or before ${field.maxDate}.`;
+  }
+
+  if (field.type === "file" && Array.isArray(v) && v.length) {
+    const max = (field.maxSizeMB ?? 5) * 1024 * 1024;
+    for (const file of v) {
+      if (file.size > max)
+        return `File ${file.name} exceeds ${field.maxSizeMB}MB.`;
+      if (field.accept) {
+        const accepts = field.accept
+          .split(",")
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean);
+        const ok = accepts.some((a) => {
+          if (a.includes("/"))
+            return (file.type || "").toLowerCase().startsWith(a);
+          if (a.startsWith(".")) return file.name.toLowerCase().endsWith(a);
+          return false;
+        });
+        if (accepts.length && !ok)
+          return `File ${file.name} is not an accepted type.`;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+export default function Preview({
+  schema,
+  values,
+  onValuesChange,
+  submit,
+  show,
+}) {
   const [errors, setErrors] = useState({});
-  const [submitted, setSubmitted] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [serverMsg, setServerMsg] = useState(null);
+  const [serverErr, setServerErr] = useState(null);
+  const [formKey, setFormKey] = useState(0);
+
+  const submitMeta = {
+    label: submit?.label || "Submit",
+    color: submit?.color || "#2563eb",
+    api: submit?.api || {
+      url: "",
+      method: "POST",
+      contentType: "json", // 'json' | 'form-data' | 'urlencoded'
+      headers: { "Content-Type": "application/json" },
+      bodyTemplate: "", // optional, supports {{field_id}} tokens
+      successKey: "message",
+      successDefault: "Submitted successfully.",
+      errorKey: "error",
+      errorDefault: "Submission failed.",
+    },
+  };
+
+  const validate = useCallback(
+    (overrideValues = values) => {
+      const errs = computeErrors(schema, overrideValues);
+      setErrors(errs);
+      return errs;
+    },
+    [schema, values]
+  );
 
   const onChange = useCallback(
     (id, val) => {
-      onValuesChange((v) => ({ ...v, [id]: val }));
+      onValuesChange((prev) => {
+        const next = { ...prev, [id]: val };
+
+        // find the field meta
+        const field = schema.find((f) => f.id === id);
+        const msg = computeFieldError(field, next);
+
+        // merge only this field’s error
+        setErrors((prevErrs) => {
+          if (msg) return { ...prevErrs, [id]: msg };
+          const { [id]: _, ...rest } = prevErrs;
+          return rest;
+        });
+
+        return next;
+      });
     },
-    [onValuesChange]
+    [onValuesChange, schema]
   );
 
-  // Optional: when schema changes, drop values for removed fields
   useEffect(() => {
     const ids = new Set((schema || []).map((f) => f.id));
     onValuesChange((v) => {
@@ -161,88 +374,186 @@ export default function Preview({ schema, values, onValuesChange }) {
     });
   }, [schema, onValuesChange]);
 
-  const validate = useCallback(() => {
-    const errs = {};
+  useEffect(() => {
+    clearForm();
+    setServerErr(null);
+    setServerMsg(null);
+    setLoading(false);
+    setErrors({});
+    setFormKey(0); // reset form key to remount inputs
+  }, [show]);
+
+  const buildRequest = useCallback(() => {
+    const api = submitMeta.api || {};
+    const ct = api.contentType || "json";
+    const headers = { ...(api.headers || {}) };
+
+    // Collect non-file field values
+    const plain = {};
     for (const f of schema) {
-      if (f.type === "static") continue;
-      const v = values[f.id];
-
-      if (f.isRequired) {
-        const empty =
-          v == null ||
-          (typeof v === "string" && v.trim() === "") ||
-          (Array.isArray(v) && v.length === 0);
-        if (empty) {
-          errs[f.id] = "This field is required.";
-          continue;
-        }
-      }
-
-      if (f.type === "text" && f.inputType === "email" && v) {
-        const ok = /\S+@\S+\.\S+/.test(v);
-        if (!ok) errs[f.id] = "Please enter a valid email.";
-      }
-
-      if (f.type === "date" && v) {
-        if (f.minDate && v < f.minDate)
-          errs[f.id] = `Date should be on or after ${f.minDate}.`;
-        if (f.maxDate && v > f.maxDate)
-          errs[f.id] = `Date should be on or before ${f.maxDate}.`;
-      }
-
-      if (f.type === "file" && v && Array.isArray(v)) {
-        const max = (f.maxSizeMB ?? 5) * 1024 * 1024;
-        for (const file of v) {
-          if (file.size > max) {
-            errs[f.id] = `File ${file.name} exceeds ${f.maxSizeMB}MB.`;
-            break;
-          }
-          if (f.accept) {
-            // Simple accept check: match by extension or mime startsWith
-            const accepts = f.accept
-              .split(",")
-              .map((s) => s.trim().toLowerCase())
-              .filter(Boolean);
-            const ok = accepts.some((a) => {
-              if (a.includes("/"))
-                return (file.type || "").toLowerCase().startsWith(a);
-              if (a.startsWith(".")) return file.name.toLowerCase().endsWith(a);
-              return false;
-            });
-            if (accepts.length && !ok) {
-              errs[f.id] = `File ${file.name} is not an accepted type.`;
-              break;
-            }
-          }
-        }
-      }
+      if (f.type === "file") continue;
+      plain[f.id] = values[f.id];
     }
-    setErrors(errs);
-    return errs;
-  }, [schema, values]);
 
-  const onSubmit = useCallback(
-    (e) => {
-      e.preventDefault();
-      const errs = validate();
-      if (Object.keys(errs).length) return;
-      const output = {};
+    const tpl =
+      api.bodyTemplate && api.bodyTemplate.trim() ? api.bodyTemplate : null;
+
+    if (ct === "form-data") {
+      const fd = new FormData();
+
+      if (tpl) {
+        try {
+          const text = applyTemplate(tpl, values);
+          const obj = JSON.parse(text);
+          Object.entries(obj).forEach(([k, v]) => {
+            if (Array.isArray(v)) v.forEach((item) => fd.append(k, item));
+            else fd.append(k, v ?? "");
+          });
+        } catch {
+          Object.entries(plain).forEach(([k, v]) => fd.append(k, v ?? ""));
+        }
+      } else {
+        Object.entries(plain).forEach(([k, v]) => fd.append(k, v ?? ""));
+      }
+
+      // append files
       for (const f of schema) {
         if (f.type === "file") {
           const files = values[f.id];
-          output[f.id] = Array.isArray(files)
-            ? files.map((f) => ({ name: f.name, size: f.size, type: f.type }))
-            : null;
-        } else {
-          output[f.id] = values[f.id] ?? null;
+          if (Array.isArray(files)) {
+            for (const file of files) fd.append(f.id, file, file.name);
+          }
         }
       }
-      console.log("Submitted values:", output);
-      setSubmitted(output);
-      alert("Form submitted! Check console for JSON. Also shown below.");
+
+      // Let the browser set Content-Type with boundary automatically
+      if ("Content-Type" in headers) delete headers["Content-Type"];
+      return { body: fd, headers };
+    }
+
+    if (ct === "urlencoded") {
+      const usp = new URLSearchParams();
+      if (tpl) {
+        try {
+          const text = applyTemplate(tpl, values);
+          const obj = JSON.parse(text);
+          Object.entries(obj).forEach(([k, v]) => {
+            if (Array.isArray(v))
+              v.forEach((item) => usp.append(k, String(item)));
+            else usp.set(k, v == null ? "" : String(v));
+          });
+        } catch {
+          Object.entries(plain).forEach(([k, v]) =>
+            usp.set(k, v == null ? "" : String(v))
+          );
+        }
+      } else {
+        Object.entries(plain).forEach(([k, v]) =>
+          usp.set(k, v == null ? "" : String(v))
+        );
+      }
+      headers["Content-Type"] =
+        "application/x-www-form-urlencoded;charset=UTF-8";
+      return { body: usp, headers };
+    }
+
+    // JSON (default)
+    let obj;
+    if (tpl) {
+      try {
+        const text = applyTemplate(tpl, values);
+        obj = JSON.parse(text);
+      } catch {
+        obj = plain; // fallback if template not valid JSON after replacement
+      }
+    } else {
+      obj = plain;
+    }
+
+    // Optionally include file names in JSON
+    for (const f of schema) {
+      if (f.type === "file") {
+        const files = values[f.id];
+        if (Array.isArray(files)) obj[f.id] = files.map((x) => x?.name);
+      }
+    }
+
+    headers["Content-Type"] = "application/json";
+    return { body: JSON.stringify(obj), headers };
+  }, [schema, values, submitMeta.api]);
+
+  const onSubmit = useCallback(
+    async (e) => {
+      e.preventDefault();
+      setServerMsg(null);
+      setServerErr(null);
+
+      const errs = validate();
+      if (Object.keys(errs).length) return;
+
+      const api = submitMeta.api || {};
+      if (!api.url) {
+        setServerErr("No API URL configured on Submit node.");
+        return;
+      }
+
+      try {
+        const { body, headers } = buildRequest();
+        setLoading(true);
+
+        const method = (api.method || "POST").toUpperCase();
+        const res = await fetch(api.url, {
+          method,
+          headers,
+          body: ["GET", "HEAD"].includes(method) ? undefined : body,
+        });
+
+        const contentType = res.headers.get("content-type") || "";
+        let payload = null;
+        try {
+          payload = contentType.includes("application/json")
+            ? await res.json()
+            : await res.text();
+        } catch {
+          payload = null;
+        }
+
+        if (res.ok) {
+          let msg = api.successDefault || "Submitted successfully.";
+          if (payload && typeof payload === "object" && api.successKey) {
+            const found = getByPath(payload, api.successKey);
+            if (found != null) msg = String(found);
+          }
+          setServerMsg(msg);
+
+          clearForm();
+        } else {
+          let msg = api.errorDefault || "Submission failed.";
+          if (payload && typeof payload === "object" && api.errorKey) {
+            const found = getByPath(payload, api.errorKey);
+            if (found != null) msg = String(found);
+          } else if (typeof payload === "string" && payload) {
+            msg = payload;
+          }
+          setServerErr(msg);
+        }
+      } catch (err) {
+        setServerErr(api.errorDefault || "Submission failed.");
+        console.error("Submission error:", err);
+      } finally {
+        setLoading(false);
+      }
     },
-    [schema, validate, values]
+    [validate, buildRequest, submitMeta]
   );
+
+  const clearForm = () => {
+    // 🔹 CLEAR the form
+    const cleared = buildClearedValues(schema);
+    onValuesChange(cleared); // this resets controlled values
+    setErrors({}); // clear validation errors
+    setFormKey((k) => k + 1); // force remount -> clears file inputs
+  };
 
   const hasSchema = Array.isArray(schema) && schema.length > 0;
 
@@ -253,7 +564,11 @@ export default function Preview({ schema, values, onValuesChange }) {
           No schema loaded yet. Go back to Builder and Export or Load Sample.
         </div>
       ) : (
-        <form onSubmit={onSubmit} className="max-w-3xl mx-auto space-y-5">
+        <form
+          key={formKey}
+          onSubmit={onSubmit}
+          className="max-w-3xl mx-auto space-y-5"
+        >
           {schema.map((f) => (
             <div
               key={f.id}
@@ -267,18 +582,37 @@ export default function Preview({ schema, values, onValuesChange }) {
               />
             </div>
           ))}
-          <button className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">
-            Submit
+          <button
+            className="px-4 py-2 rounded-md text-white"
+            style={{ backgroundColor: submitMeta.color }}
+            disabled={loading}
+          >
+            {loading ? "Submitting..." : submitMeta.label}
           </button>
         </form>
       )}
 
-      {submitted && (
+      {/* {submitted && (
         <div className="max-w-3xl mx-auto mt-6">
           <div className="text-sm font-semibold mb-2">Submitted JSON</div>
           <pre className="text-xs bg-gray-900 text-green-300 p-3 rounded-lg overflow-auto">
             {JSON.stringify(submitted, null, 2)}
           </pre>
+        </div>
+      )} */}
+
+      {serverMsg && (
+        <div className="max-w-3xl mx-auto mt-6">
+          <div className="p-3 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300 text-sm">
+            {serverMsg}
+          </div>
+        </div>
+      )}
+      {serverErr && (
+        <div className="max-w-3xl mx-auto mt-6">
+          <div className="p-3 rounded-md bg-red-50 text-red-800 border border-red-300 text-sm">
+            {serverErr}
+          </div>
         </div>
       )}
     </div>

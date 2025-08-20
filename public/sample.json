@@ -1,0 +1,39 @@
+[
+  {
+    "type": "static",
+    "label": "Registration Form",
+    "isRequired": false,
+    "text": "Enter your details below to register.",
+    "id": "static_1"
+  },
+  {
+    "id": "text_1",
+    "type": "text",
+    "label": "Role",
+    "isRequired": true,
+    "placeholder": "Enter your role",
+    "inputType": "text"
+  },
+  {
+    "id": "radio_1",
+    "type": "radio",
+    "label": "Gender",
+    "isRequired": true,
+    "options": ["Male", "Female"]
+  },
+  {
+    "id": "textarea_1",
+    "type": "textarea",
+    "label": "Full Name",
+    "isRequired": true,
+    "placeholder": "Enter full name"
+  },
+  {
+    "id": "date_1",
+    "type": "date",
+    "label": "DOB",
+    "isRequired": true,
+    "minDate": "1975-08-20",
+    "maxDate": "2025-08-20"
+  }
+]
