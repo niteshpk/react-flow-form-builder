@@ -1,70 +1,32 @@
 [
   {
-    "id": "fullName",
+    "id": "lA1G7jSB",
     "type": "text",
-    "label": "Full Name",
+    "label": "Role",
     "isRequired": true,
-    "placeholder": "Enter your full name",
+    "placeholder": "Enter your role",
     "inputType": "text"
   },
   {
-    "id": "email",
-    "type": "text",
-    "label": "Email Address",
-    "isRequired": true,
-    "placeholder": "you@example.com",
-    "inputType": "email"
-  },
-  {
-    "id": "about",
-    "type": "textarea",
-    "label": "About Yourself",
-    "isRequired": false,
-    "placeholder": "Write a short bio..."
-  },
-  {
-    "id": "gender",
+    "id": "GViZm4Yv",
     "type": "radio",
     "label": "Gender",
     "isRequired": true,
-    "options": ["Male", "Female", "Other"]
+    "options": ["Male", "Female"]
   },
   {
-    "id": "skills",
-    "type": "checkbox",
-    "label": "Skills",
-    "isRequired": false,
-    "options": ["React", "Angular", "Vue", "Node.js"]
-  },
-  {
-    "id": "country",
-    "type": "select",
-    "label": "Country",
+    "id": "6_w8qkSh",
+    "type": "textarea",
+    "label": "Full Name",
     "isRequired": true,
-    "options": ["India", "USA", "UK", "Germany"],
-    "multiple": false
+    "placeholder": "Enter full name"
   },
   {
-    "id": "dob",
+    "id": "tjE9E8GA",
     "type": "date",
-    "label": "Date of Birth",
+    "label": "DOB",
     "isRequired": true,
-    "minDate": "1900-01-01",
-    "maxDate": "2025-12-31"
-  },
-  {
-    "id": "resume",
-    "type": "file",
-    "label": "Upload Resume",
-    "isRequired": true,
-    "accept": ".pdf",
-    "maxSizeMB": 5,
-    "multiple": false
-  },
-  {
-    "id": "intro",
-    "type": "static",
-    "label": "Welcome Section",
-    "text": "Please complete the form below. Fields marked with * are mandatory."
+    "minDate": "1975-08-20",
+    "maxDate": "2025-08-20"
   }
 ]

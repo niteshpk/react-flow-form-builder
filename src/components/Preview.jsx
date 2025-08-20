@@ -5,7 +5,7 @@ function FieldRenderer({ field, value, onChange, errors }) {
 
   if (field.type === "static") {
     return (
-      <div className="">
+      <div className="p-3 bg-gray-50 rounded border">
         <div className="font-semibold">{field.label || "Section"}</div>
         {field.text && (
           <div className="text-sm text-gray-700 mt-1 whitespace-pre-wrap">
@@ -140,9 +140,13 @@ function FieldRenderer({ field, value, onChange, errors }) {
   );
 }
 
-export default function Preview({ schema, values, onValuesChange }) {
+export default function Preview({ schema, values, onValuesChange, submit }) {
   const [errors, setErrors] = useState({});
   const [submitted, setSubmitted] = useState(null);
+  const submitMeta = {
+    label: submit?.label || "Submit",
+    color: submit?.color || "#2563eb",
+  };
 
   const onChange = useCallback(
     (id, val) => {
@@ -151,7 +155,6 @@ export default function Preview({ schema, values, onValuesChange }) {
     [onValuesChange]
   );
 
-  // Optional: when schema changes, drop values for removed fields
   useEffect(() => {
     const ids = new Set((schema || []).map((f) => f.id));
     onValuesChange((v) => {
@@ -166,7 +169,6 @@ export default function Preview({ schema, values, onValuesChange }) {
     for (const f of schema) {
       if (f.type === "static") continue;
       const v = values[f.id];
-
       if (f.isRequired) {
         const empty =
           v == null ||
@@ -177,19 +179,16 @@ export default function Preview({ schema, values, onValuesChange }) {
           continue;
         }
       }
-
       if (f.type === "text" && f.inputType === "email" && v) {
         const ok = /\S+@\S+\.\S+/.test(v);
         if (!ok) errs[f.id] = "Please enter a valid email.";
       }
-
       if (f.type === "date" && v) {
         if (f.minDate && v < f.minDate)
           errs[f.id] = `Date should be on or after ${f.minDate}.`;
         if (f.maxDate && v > f.maxDate)
           errs[f.id] = `Date should be on or before ${f.maxDate}.`;
       }
-
       if (f.type === "file" && v && Array.isArray(v)) {
         const max = (f.maxSizeMB ?? 5) * 1024 * 1024;
         for (const file of v) {
@@ -198,7 +197,6 @@ export default function Preview({ schema, values, onValuesChange }) {
             break;
           }
           if (f.accept) {
-            // Simple accept check: match by extension or mime startsWith
             const accepts = f.accept
               .split(",")
               .map((s) => s.trim().toLowerCase())
@@ -267,8 +265,11 @@ export default function Preview({ schema, values, onValuesChange }) {
               />
             </div>
           ))}
-          <button className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">
-            Submit
+          <button
+            className="px-4 py-2 rounded-md text-white"
+            style={{ backgroundColor: submitMeta.color }}
+          >
+            {submitMeta.label}
           </button>
         </form>
       )}

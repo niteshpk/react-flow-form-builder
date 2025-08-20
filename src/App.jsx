@@ -6,19 +6,47 @@ import { readTextFile } from "./lib/storage.js";
 
 export default function App() {
   const [mode, setMode] = useState("builder"); // 'builder' | 'preview'
-  const [schema, setSchema] = useState([]); // exported schema from builder
-
+  const [schema, setSchema] = useState([]); // ordered fields
+  const [submitMeta, setSubmitMeta] = useState({
+    label: "Submit",
+    color: "#2563eb",
+  });
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
-  const [previewValues, setPreviewValues] = useState({}); // <-- persist form values across Preview mounts
+  const [previewValues, setPreviewValues] = useState({});
+
+  // Request latest schema + submit from Builder, then show Preview
+  const goPreview = useCallback(() => {
+    let gotA = false,
+      gotB = false;
+    const onSchema = (e) => {
+      setSchema(e.detail || []);
+      gotA = true;
+      maybe();
+    };
+    const onSubmit = (e) => {
+      setSubmitMeta(e.detail || { label: "Submit", color: "#2563eb" });
+      gotB = true;
+      maybe();
+    };
+    const cleanup = () => {
+      window.removeEventListener("xyflow:current-schema", onSchema);
+      window.removeEventListener("xyflow:current-submit", onSubmit);
+    };
+    const maybe = () => {
+      if (gotA && gotB) {
+        cleanup();
+        setMode("preview");
+      }
+    };
+    window.addEventListener("xyflow:current-schema", onSchema);
+    window.addEventListener("xyflow:current-submit", onSubmit);
+    window.dispatchEvent(new Event("xyflow:request-schema"));
+    window.dispatchEvent(new Event("xyflow:request-submit"));
+  }, []);
 
   const onExport = useCallback((exported) => {
     setSchema(exported);
-    // saveToFile(
-    //   JSON.stringify(exported, null, 2),
-    //   "form-schema.json",
-    //   "application/json"
-    // );
   }, []);
 
   const onCopy = useCallback((exported) => {
@@ -28,21 +56,18 @@ export default function App() {
       .catch(() => alert("Copy failed"));
   }, []);
 
-  const onImportSchema = useCallback(() => {
-    setImportOpen(true);
-  }, []);
+  const onImportSchema = useCallback(() => setImportOpen(true), []);
 
   const handleImportText = useCallback(() => {
     try {
       const parsed = JSON.parse(importText);
-      // Send to builder via event
       window.dispatchEvent(
         new CustomEvent("xyflow:import-schema", { detail: parsed })
       );
       setImportOpen(false);
       setImportText("");
-    } catch (e) {
-      alert("Invalid JSON", e);
+    } catch {
+      alert("Invalid JSON");
     }
   }, [importText]);
 
@@ -55,38 +80,31 @@ export default function App() {
       );
       setImportOpen(false);
       setImportText("");
-    } catch (e) {
-      alert("Failed to import file / invalid JSON", e);
+    } catch {
+      alert("Failed to import file / invalid JSON");
     }
   }, []);
 
   const loadSample = useCallback(() => {
-    const sample = getSampleSchema();
+    const graph = getSampleSchema();
     window.dispatchEvent(
-      new CustomEvent("xyflow:import-schema", { detail: sample })
+      new CustomEvent("xyflow:import-schema", { detail: graph })
     );
-    alert("Loaded sample schema with 40+ fields");
   }, []);
 
   return (
     <div className="h-full w-full bg-gray-50 text-gray-900">
       <header className="h-14 border-b bg-white flex items-center px-4 gap-2">
-        <h1 className="font-semibold tracking-tight">
-          Form Builder - React Flow Test
-        </h1>
+        <h1 className="font-semibold tracking-tight">XYFlow Form Builder</h1>
         <div className="ml-auto flex items-center gap-2">
           {mode === "builder" ? (
             <>
               <button
                 className="px-3 py-1.5 rounded-md bg-gray-100 hover:bg-gray-200"
-                onClick={() => {
-                  window.dispatchEvent(new Event("xyflow:export-schema"));
-                  setMode("preview");
-                }}
+                onClick={goPreview}
               >
                 Preview
               </button>
-
               <button
                 className="px-3 py-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700"
                 onClick={() =>
@@ -130,16 +148,15 @@ export default function App() {
       </header>
 
       <main className="h-[calc(100%-3.5rem)] relative">
-        {/* Keep Builder mounted */}
         <div className={mode === "builder" ? "block h-full" : "hidden"}>
           <Builder onExport={onExport} onCopy={onCopy} />
         </div>
-        {/* Keep Preview mounted */}
         <div className={mode === "preview" ? "block h-full" : "hidden"}>
           <Preview
             schema={schema}
             values={previewValues}
             onValuesChange={setPreviewValues}
+            submit={submitMeta}
           />
         </div>
       </main>

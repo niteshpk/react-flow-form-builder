@@ -10,11 +10,8 @@ export default function PropertiesPanel({
     () => nodes.find((n) => n.id === selectedId),
     [nodes, selectedId]
   );
-  const field = node?.data?.field;
-
-  const onChange = (patch) => {
-    onChangeField(node.id, { ...field, ...patch });
-  };
+  const isField = node?.type === "field";
+  const field = isField ? node?.data?.field : null;
 
   if (!node) {
     return (
@@ -23,6 +20,31 @@ export default function PropertiesPanel({
       </aside>
     );
   }
+
+  if (!isField) {
+    // Structural node (start / end / submit)
+    return (
+      <aside className="w-80 border-l bg-white p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="font-semibold text-sm capitalize">
+            {node.type} node
+          </div>
+          <button className="text-red-600 text-sm" onClick={onDelete}>
+            Delete
+          </button>
+        </div>
+        <div className="text-xs text-gray-600">
+          This is a <b>{node.type}</b> node used to define ordering via edges.
+          <br />
+          Connect: <code>start → …fields… → end → submit</code>.
+        </div>
+      </aside>
+    );
+  }
+
+  const onChange = (patch) => {
+    onChangeField(node.id, { ...field, ...patch });
+  };
 
   return (
     <aside className="w-80 border-l bg-white p-4 space-y-3 overflow-auto">
@@ -189,17 +211,6 @@ export default function PropertiesPanel({
             </div>
           </div>
         </>
-      )}
-
-      {field.type === "static" && (
-        <div className="space-y-1">
-          <label className="text-xs text-gray-700">Text</label>
-          <textarea
-            className="w-full border rounded px-2 py-1 text-sm h-28"
-            value={field.text || ""}
-            onChange={(e) => onChange({ text: e.target.value })}
-          />
-        </div>
       )}
     </aside>
   );
