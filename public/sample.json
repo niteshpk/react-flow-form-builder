@@ -1,6 +1,13 @@
 [
   {
-    "id": "lA1G7jSB",
+    "type": "static",
+    "label": "Registration Form",
+    "isRequired": false,
+    "text": "Enter your details below to register.",
+    "id": "static_1"
+  },
+  {
+    "id": "text_1",
     "type": "text",
     "label": "Role",
     "isRequired": true,
@@ -8,21 +15,21 @@
     "inputType": "text"
   },
   {
-    "id": "GViZm4Yv",
+    "id": "radio_1",
     "type": "radio",
     "label": "Gender",
     "isRequired": true,
     "options": ["Male", "Female"]
   },
   {
-    "id": "6_w8qkSh",
+    "id": "textarea_1",
     "type": "textarea",
     "label": "Full Name",
     "isRequired": true,
     "placeholder": "Enter full name"
   },
   {
-    "id": "tjE9E8GA",
+    "id": "date_1",
     "type": "date",
     "label": "DOB",
     "isRequired": true,

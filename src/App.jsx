@@ -7,10 +7,11 @@ import { readTextFile } from "./lib/storage.js";
 export default function App() {
   const [mode, setMode] = useState("builder"); // 'builder' | 'preview'
   const [schema, setSchema] = useState([]); // ordered fields
-  const [submitMeta, setSubmitMeta] = useState({
+  const [submitConfig, setSubmitConfig] = useState({
     label: "Submit",
     color: "#2563eb",
   });
+
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
   const [previewValues, setPreviewValues] = useState({});
@@ -25,10 +26,11 @@ export default function App() {
       maybe();
     };
     const onSubmit = (e) => {
-      setSubmitMeta(e.detail || { label: "Submit", color: "#2563eb" });
+      setSubmitConfig(e.detail || {});
       gotB = true;
       maybe();
     };
+
     const cleanup = () => {
       window.removeEventListener("xyflow:current-schema", onSchema);
       window.removeEventListener("xyflow:current-submit", onSubmit);
@@ -105,14 +107,14 @@ export default function App() {
               >
                 Preview
               </button>
-              <button
+              {/* <button
                 className="px-3 py-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700"
                 onClick={() =>
                   window.dispatchEvent(new Event("xyflow:export-schema"))
                 }
               >
                 Export JSON
-              </button>
+              </button> */}
               <button
                 className="px-3 py-1.5 rounded-md bg-blue-100 hover:bg-blue-200"
                 onClick={() =>
@@ -156,7 +158,8 @@ export default function App() {
             schema={schema}
             values={previewValues}
             onValuesChange={setPreviewValues}
-            submit={submitMeta}
+            submit={submitConfig}
+            show={mode === "preview"}
           />
         </div>
       </main>

@@ -114,15 +114,29 @@ export function defaultField(type) {
 export function createNodeFromType(typeOrField, position, idNum) {
   let id = String(idNum || nanoid(8));
 
-  // Structural nodes
   if (
     typeof typeOrField === "string" &&
     ["start", "end", "submit"].includes(typeOrField)
   ) {
-    const data =
-      typeOrField === "submit"
-        ? { label: "Submit", color: "#2563eb" }
-        : { label: typeOrField };
+    const isSubmit = typeOrField === "submit";
+    const data = isSubmit
+      ? {
+          label: "Submit",
+          color: "#2563eb",
+          api: {
+            url: "",
+            method: "POST",
+            contentType: "json", // 'json' | 'form-data' | 'urlencoded'
+            headers: { "Content-Type": "application/json" },
+            bodyTemplate: "", // optional template, see Preview docs
+            successKey: "message",
+            successDefault: "Submitted successfully.",
+            errorKey: "error",
+            errorDefault: "Submission failed.",
+          },
+        }
+      : { label: typeOrField };
+
     return {
       id,
       type: typeOrField,
@@ -131,12 +145,11 @@ export function createNodeFromType(typeOrField, position, idNum) {
     };
   }
 
-  // Field nodes
   let field;
   if (typeof typeOrField === "string") {
-    field = defaultField(typeOrField); // includes virtual handling
+    field = defaultField(typeOrField);
   } else {
-    field = { ...typeOrField }; // preserve id on import
+    field = { ...typeOrField };
   }
 
   return {

@@ -27,6 +27,15 @@ function BuilderInner({ onExport, onCopy }) {
   const [validationMsg, setValidationMsg] = useState("");
   const msgTimerRef = useRef(null);
   const idCounterRef = useRef(1);
+  const [inspectorOpen, setInspectorOpen] = useState(() => {
+    // persist across refresh; remove if you don't want persistence
+    const saved = localStorage.getItem("xyflow:inspectorOpen");
+    return saved ? saved === "1" : true;
+  });
+
+  useEffect(() => {
+    localStorage.setItem("xyflow:inspectorOpen", inspectorOpen ? "1" : "0");
+  }, [inspectorOpen]);
 
   // ---- helpers ----
   const nodeById = useCallback((id) => nodes.find((n) => n.id === id), [nodes]);
@@ -193,6 +202,34 @@ function BuilderInner({ onExport, onCopy }) {
     window.addEventListener("keydown", keyHandler);
     return () => window.removeEventListener("keydown", keyHandler);
   }, [selectedId, deleteSelected]);
+
+  useEffect(() => {
+    const requestSubmit = () => {
+      const submitNode = nodes.find((n) => n.type === "submit");
+      const meta = {
+        label: submitNode?.data?.label ?? "Submit",
+        color: submitNode?.data?.color ?? "#2563eb",
+        api: submitNode?.data?.api ?? {
+          url: "",
+          method: "POST",
+          contentType: "json",
+          headers: { "Content-Type": "application/json" },
+          bodyTemplate: "",
+          successKey: "message",
+          successDefault: "Submitted successfully.",
+          errorKey: "error",
+          errorDefault: "Submission failed.",
+        },
+      };
+      window.dispatchEvent(
+        new CustomEvent("xyflow:current-submit", { detail: meta })
+      );
+    };
+
+    window.addEventListener("xyflow:request-submit", requestSubmit);
+    return () =>
+      window.removeEventListener("xyflow:request-submit", requestSubmit);
+  }, [nodes]);
 
   // ----- ORDERING + diagnostics -----
   const diag = useMemo(() => {
@@ -504,28 +541,95 @@ function BuilderInner({ onExport, onCopy }) {
           {/* Order Inspector */}
           <Panel
             position="top-right"
-            className="w-[280px] text-xs bg-white/90 rounded-md shadow p-2 space-y-2"
+            className={`rounded-md shadow bg-white/90 
+              ${diag.warnings.length ? "border border-amber-700" : ""}
+              ${inspectorOpen ? "w-[280px] p-2 space-y-2" : "w-[180px] p-1"}`}
           >
-            <div className="font-semibold">Order Inspector</div>
-            <div className="text-[11px] text-gray-600">
-              Render order follows the path:
+            {/* Header row — always visible */}
+            <div className="flex items-center justify-between">
+              <div className="font-semibold text-xs">Order Inspector</div>
+              <button
+                type="button"
+                onClick={() => setInspectorOpen((v) => !v)}
+                aria-expanded={inspectorOpen}
+                aria-label={
+                  inspectorOpen
+                    ? "Minimize Order Inspector"
+                    : "Maximize Order Inspector"
+                }
+                className="inline-flex items-center justify-center w-6 h-6 rounded hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                title={inspectorOpen ? "Minimize" : "Maximize"}
+              >
+                {inspectorOpen ? (
+                  // minus icon
+                  <svg
+                    viewBox="0 0 16 16"
+                    width="14"
+                    height="14"
+                    aria-hidden="true"
+                  >
+                    <rect
+                      x="3"
+                      y="7.25"
+                      width="10"
+                      height="1.5"
+                      rx="0.75"
+                      fill="currentColor"
+                    />
+                  </svg>
+                ) : (
+                  // plus icon
+                  <svg
+                    viewBox="0 0 16 16"
+                    width="14"
+                    height="14"
+                    aria-hidden="true"
+                  >
+                    <rect
+                      x="3"
+                      y="7.25"
+                      width="10"
+                      height="1.5"
+                      rx="0.75"
+                      fill="currentColor"
+                    />
+                    <rect
+                      x="7.25"
+                      y="3"
+                      width="1.5"
+                      height="10"
+                      rx="0.75"
+                      fill="currentColor"
+                    />
+                  </svg>
+                )}
+              </button>
             </div>
-            <div className="text-[11px] break-words">
-              {diag.sequence.length ? (
-                diag.sequence.join("  →  ")
-              ) : (
-                <span className="text-gray-500">No path yet</span>
-              )}
-            </div>
-            {diag.warnings.length > 0 && (
-              <div className="pt-1">
-                <div className="font-semibold text-amber-700">Warnings</div>
-                <ul className="list-disc pl-4 space-y-0.5 text-amber-800">
-                  {diag.warnings.map((w, i) => (
-                    <li key={i}>{w}</li>
-                  ))}
-                </ul>
-              </div>
+
+            {/* Body — only when open */}
+            {inspectorOpen && (
+              <>
+                <div className="text-[11px] text-gray-600">
+                  Render order follows the path:
+                </div>
+                <div className="text-[11px] break-words">
+                  {diag.sequence.length ? (
+                    diag.sequence.join("  →  ")
+                  ) : (
+                    <span className="text-gray-500">No path yet</span>
+                  )}
+                </div>
+                {diag.warnings.length > 0 && (
+                  <div className="pt-1">
+                    <div className="font-semibold text-amber-700">Warnings</div>
+                    <ul className="list-disc pl-4 space-y-0.5 text-amber-800">
+                      {diag.warnings.map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
             )}
           </Panel>
 
