@@ -1,20 +1,11 @@
-import React, { useCallback, useState, useEffect } from "react";
+import React, { useCallback, useState, useEffect, useMemo } from "react";
 
 function FieldRenderer({ field, value, onChange, errors }) {
   const err = errors[field.id];
 
-  if (field.type === "static") {
-    return (
-      <div className="p-3 bg-gray-50 rounded border">
-        <div className="font-semibold">{field.label || "Section"}</div>
-        {field.text && (
-          <div className="text-sm text-gray-700 mt-1 whitespace-pre-wrap">
-            {field.text}
-          </div>
-        )}
-      </div>
-    );
-  }
+  // We won't call FieldRenderer for "static" inside grouped rendering.
+  // If you still accidentally pass one, just skip.
+  if (field.type === "static") return null;
 
   const requiredMark = field.isRequired ? (
     <span className="text-red-600">*</span>
@@ -270,7 +261,6 @@ function computeFieldError(field, values) {
       const ok = /\S+@\S+\.\S+/.test(v);
       if (!ok) return "Please enter a valid email.";
     }
-    // add more inputType checks here if you want (number, url, tel, etc.)
   }
 
   if (field.type === "date" && v) {
@@ -303,6 +293,27 @@ function computeFieldError(field, values) {
   }
 
   return undefined;
+}
+
+// ---- NEW: group schema into sections (each static starts a section) ----
+function groupIntoSections(schema) {
+  const groups = [];
+  let current = null;
+
+  for (const f of schema || []) {
+    if (f.type === "static") {
+      current = { static: f, fields: [] };
+      groups.push(current);
+    } else {
+      if (!current) {
+        // fields before any static → ungrouped section
+        current = { static: null, fields: [] };
+        groups.push(current);
+      }
+      current.fields.push(f);
+    }
+  }
+  return groups;
 }
 
 export default function Preview({
@@ -348,11 +359,9 @@ export default function Preview({
       onValuesChange((prev) => {
         const next = { ...prev, [id]: val };
 
-        // find the field meta
         const field = schema.find((f) => f.id === id);
         const msg = computeFieldError(field, next);
 
-        // merge only this field’s error
         setErrors((prevErrs) => {
           if (msg) return { ...prevErrs, [id]: msg };
           const { [id]: _, ...rest } = prevErrs;
@@ -382,6 +391,8 @@ export default function Preview({
     setErrors({});
     setFormKey(0); // reset form key to remount inputs
   }, [show]);
+
+  const groups = useMemo(() => groupIntoSections(schema), [schema]);
 
   const buildRequest = useCallback(() => {
     const api = submitMeta.api || {};
@@ -426,7 +437,6 @@ export default function Preview({
         }
       }
 
-      // Let the browser set Content-Type with boundary automatically
       if ("Content-Type" in headers) delete headers["Content-Type"];
       return { body: fd, headers };
     }
@@ -464,13 +474,13 @@ export default function Preview({
         const text = applyTemplate(tpl, values);
         obj = JSON.parse(text);
       } catch {
-        obj = plain; // fallback if template not valid JSON after replacement
+        obj = plain;
       }
     } else {
       obj = plain;
     }
 
-    // Optionally include file names in JSON
+    // include file names in JSON if present
     for (const f of schema) {
       if (f.type === "file") {
         const files = values[f.id];
@@ -548,11 +558,10 @@ export default function Preview({
   );
 
   const clearForm = () => {
-    // 🔹 CLEAR the form
     const cleared = buildClearedValues(schema);
-    onValuesChange(cleared); // this resets controlled values
-    setErrors({}); // clear validation errors
-    setFormKey((k) => k + 1); // force remount -> clears file inputs
+    onValuesChange(cleared);
+    setErrors({});
+    setFormKey((k) => k + 1);
   };
 
   const hasSchema = Array.isArray(schema) && schema.length > 0;
@@ -569,21 +578,47 @@ export default function Preview({
           onSubmit={onSubmit}
           className="max-w-3xl mx-auto space-y-5"
         >
-          {schema.map((f) => (
+          {groups.map((g, idx) => (
             <div
-              key={f.id}
-              className="p-4 bg-white rounded-lg border space-y-2"
+              key={g.static?.id || `group_${idx}`}
+              className="p-4 bg-white rounded-lg border space-y-3"
             >
-              <FieldRenderer
-                field={f}
-                value={values?.[f.id]}
-                onChange={onChange}
-                errors={errors}
-              />
+              {g.static && (
+                <div className="p-3 bg-gray-50 rounded border">
+                  <div className="font-semibold">
+                    {g.static.label || "Section"}
+                  </div>
+                  {g.static.text && (
+                    <div className="text-sm text-gray-700 mt-1 whitespace-pre-wrap">
+                      {g.static.text}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="space-y-4">
+                {g.fields.length === 0 ? (
+                  <div className="text-xs text-gray-500">
+                    No fields in this section.
+                  </div>
+                ) : (
+                  g.fields.map((f, i) => (
+                    <div key={f.id} className={i ? "pt-3 border-t" : undefined}>
+                      <FieldRenderer
+                        field={f}
+                        value={values?.[f.id]}
+                        onChange={onChange}
+                        errors={errors}
+                      />
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           ))}
+
           <button
-            className="px-4 py-2 rounded-md text-white"
+            className="px-4 py-2 rounded-md text-white disabled:opacity-60"
             style={{ backgroundColor: submitMeta.color }}
             disabled={loading}
           >
@@ -591,15 +626,6 @@ export default function Preview({
           </button>
         </form>
       )}
-
-      {/* {submitted && (
-        <div className="max-w-3xl mx-auto mt-6">
-          <div className="text-sm font-semibold mb-2">Submitted JSON</div>
-          <pre className="text-xs bg-gray-900 text-green-300 p-3 rounded-lg overflow-auto">
-            {JSON.stringify(submitted, null, 2)}
-          </pre>
-        </div>
-      )} */}
 
       {serverMsg && (
         <div className="max-w-3xl mx-auto mt-6">
