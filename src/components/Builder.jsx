@@ -16,10 +16,16 @@ import Sidebar from "./Sidebar.jsx";
 import PropertiesPanel from "./PropertiesPanel.jsx";
 import { fieldNodeTypes } from "./nodes/nodeTypes.js";
 import { createNodeFromType, seedIdCountersFromFields } from "../lib/schema.js";
+import {
+  deriveOrderedFields,
+  validateEdgeDraft,
+  validateGraph,
+} from "../lib/ordering.js";
 
 function BuilderInner({ onExport, onCopy }) {
   const reactFlowWrapper = useRef(null);
   const { screenToFlowPosition, setViewport } = useReactFlow();
+  const [selectedIds, setSelectedIds] = useState([]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -36,6 +42,11 @@ function BuilderInner({ onExport, onCopy }) {
   useEffect(() => {
     localStorage.setItem("xyflow:inspectorOpen", inspectorOpen ? "1" : "0");
   }, [inspectorOpen]);
+
+  const isValidConnection = useCallback(
+    (conn) => validateEdgeDraft(conn, nodes),
+    [nodes]
+  );
 
   // ---- helpers ----
   const nodeById = useCallback((id) => nodes.find((n) => n.id === id), [nodes]);
@@ -129,8 +140,10 @@ function BuilderInner({ onExport, onCopy }) {
     [setEdges, validateConnection, showMsg]
   );
 
-  const onSelectionChange = useCallback(({ nodes: selectedNodes }) => {
-    setSelectedId(selectedNodes?.[0]?.id ?? null);
+  const onSelectionChange = useCallback(({ nodes: selNodes }) => {
+    const ids = (selNodes || []).map((n) => n.id);
+    setSelectedIds(ids);
+    setSelectedId(ids[0] ?? null);
   }, []);
 
   const onDragOver = useCallback((event) => {
@@ -233,94 +246,13 @@ function BuilderInner({ onExport, onCopy }) {
 
   // ----- ORDERING + diagnostics -----
   const diag = useMemo(() => {
-    const map = new Map(nodes.map((n) => [n.id, n]));
-    const out = new Map();
-    const incoming = new Map();
-    edges.forEach((e) => {
-      if (!out.has(e.source)) out.set(e.source, []);
-      out.get(e.source).push(e.target);
-      incoming.set(e.target, (incoming.get(e.target) || 0) + 1);
-    });
-
-    const start = nodes.find((n) => n.type === "start");
-    const end = nodes.find((n) => n.type === "end");
-    const submit = nodes.find((n) => n.type === "submit");
-
-    const warnings = [];
-    if (!start) warnings.push("Add a Start node.");
-    if (!end) warnings.push("Add an End node.");
-    if (!submit) warnings.push("Add a Submit node.");
-
-    // edges sanity
-    nodes.forEach((n) => {
-      const outs = (out.get(n.id) || []).length;
-      const ins = incoming.get(n.id) || 0;
-      if (n.type === "start" && ins > 0)
-        warnings.push("Start has incoming edges (not allowed).");
-      if (n.type === "submit" && outs > 0)
-        warnings.push("Submit has outgoing edges (not allowed).");
-      if (n.type === "end" && outs > 1)
-        warnings.push("End should have only one outgoing edge to Submit.");
-      if (n.type !== "submit" && outs > 1)
-        warnings.push(
-          `Node ${n.id} has multiple outgoing edges; order is linear.`
-        );
-      if (n.type !== "start" && ins > 1)
-        warnings.push(
-          `Node ${n.id} has multiple incoming edges; order is linear.`
-        );
-    });
-
-    // follow linear path: Start -> next -> ... until no next
-    const seq = [];
-    const seqIds = [];
-    const visited = new Set();
-    let cur = start?.id;
-    if (start) {
-      seq.push("Start");
-      seqIds.push(start.id);
-      while (cur) {
-        const nexts = out.get(cur) || [];
-        if (nexts.length === 0) break;
-        const nxt = nexts[0]; // linear
-        if (visited.has(nxt)) {
-          warnings.push("Cycle detected in path; stopped traversal.");
-          break;
-        }
-        visited.add(nxt);
-        const node = map.get(nxt);
-        if (!node) break;
-        if (node.type === "field" && node.data?.field) {
-          seq.push(node.data.field.label || node.data.field.id);
-        } else if (node.type === "end") {
-          seq.push("End");
-        } else if (node.type === "submit") {
-          seq.push("Submit");
-        }
-        seqIds.push(nxt);
-        cur = nxt;
-      }
-    }
-
-    // warn if end->submit missing (when both exist)
-    if (end && submit) {
-      const ok = edges.some(
-        (e) => e.source === end.id && e.target === submit.id
-      );
-      if (!ok) warnings.push("Connect End → Submit.");
-    }
-
-    // un-ordered field nodes
-    const orderedSet = new Set(seqIds);
-    const orphanFields = nodes.filter(
-      (n) => n.type === "field" && !orderedSet.has(n.id)
-    );
-    if (orphanFields.length)
-      warnings.push(
-        `${orphanFields.length} field(s) are not in the Start→End→Submit path.`
-      );
-
-    return { sequence: seq, warnings };
+    const d = deriveOrderedFields(nodes, edges);
+    const gw = validateGraph(nodes, edges);
+    return {
+      sequence: d.sequence,
+      warnings: [...d.warnings, ...gw],
+      orderedFields: d.orderedFields,
+    };
   }, [nodes, edges]);
 
   // ----- schema export / import / app bridge -----
@@ -353,12 +285,26 @@ function BuilderInner({ onExport, onCopy }) {
   // Export / Copy / Import / Request events
   useEffect(() => {
     const exportHandler = () => {
-      const schema = getOrderedFields();
-      onExport?.(schema);
+      // export ordered fields (falls back to raw if empty)
+      const out = diag.orderedFields?.length
+        ? diag.orderedFields
+        : nodes.filter((n) => n.type === "field").map((n) => n.data.field);
+      onExport?.(out);
     };
     const copyHandler = () => {
-      const schema = getOrderedFields();
-      onCopy?.(schema);
+      const out = diag.orderedFields?.length
+        ? diag.orderedFields
+        : nodes.filter((n) => n.type === "field").map((n) => n.data.field);
+      onCopy?.(out);
+    };
+
+    const requestHandler = () => {
+      const out = diag.orderedFields?.length
+        ? diag.orderedFields
+        : nodes.filter((n) => n.type === "field").map((n) => n.data.field);
+      window.dispatchEvent(
+        new CustomEvent("xyflow:current-schema", { detail: out })
+      );
     };
 
     const importHandler = (e) => {
@@ -489,22 +435,141 @@ function BuilderInner({ onExport, onCopy }) {
     window.addEventListener("xyflow:import-schema", importHandler);
     window.addEventListener("xyflow:request-schema", requestSchema);
     window.addEventListener("xyflow:request-submit", requestSubmit);
+    window.addEventListener("xyflow:request-schema", requestHandler);
     return () => {
       window.removeEventListener("xyflow:export-schema", exportHandler);
       window.removeEventListener("xyflow:copy-schema", copyHandler);
       window.removeEventListener("xyflow:import-schema", importHandler);
       window.removeEventListener("xyflow:request-schema", requestSchema);
       window.removeEventListener("xyflow:request-submit", requestSubmit);
+      window.removeEventListener("xyflow:request-submit", requestHandler);
     };
-  }, [
-    getOrderedFields,
-    nodes,
-    onExport,
-    onCopy,
-    setNodes,
-    setEdges,
-    setViewport,
-  ]);
+  }, [nodes, edges, diag, onExport, onCopy, setNodes, setEdges, setViewport]);
+
+  // Utility: stable sort by canvas position
+  const sortByPos = (arr) =>
+    [...arr].sort(
+      (a, b) =>
+        (a.position?.y ?? 0) - (b.position?.y ?? 0) ||
+        (a.position?.x ?? 0) - (b.position?.x ?? 0) ||
+        String(a.id).localeCompare(String(b.id))
+    );
+
+  // Utility: unique edge by source-target pair
+  const uniqEdges = (eds) => {
+    const seen = new Set();
+    const out = [];
+    for (const e of eds) {
+      const key = `${e.source}->${e.target}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push({ id: e.id || `e_${e.source}_${e.target}`, ...e });
+      }
+    }
+    return out;
+  };
+
+  const makeSection = useCallback(() => {
+    if (!selectedIds.length) {
+      alert("Select one or more field nodes (non-static) to make a section.");
+      return;
+    }
+
+    // Map ids to nodes
+    const idToNode = new Map(nodes.map((n) => [n.id, n]));
+    const isFieldNode = (n) => n?.type === "field" && n?.data?.field;
+    const isStaticField = (n) =>
+      isFieldNode(n) && n.data.field.type === "static";
+
+    // Eligible = field nodes that are NOT static wrappers
+    const eligible = selectedIds
+      .map((id) => idToNode.get(id))
+      .filter((n) => isFieldNode(n) && !isStaticField(n));
+
+    if (!eligible.length) {
+      alert("No eligible fields in selection (static/structural are ignored).");
+      return;
+    }
+
+    // Order selected fields vertically (then x)
+    const ordered = sortByPos(eligible);
+    const first = ordered[0];
+    const last = ordered[ordered.length - 1];
+
+    // Place the new static wrapper to the left of the first field
+    const staticPos = {
+      x: (first.position?.x ?? 0) - 240,
+      y: (first.position?.y ?? 0) - 16,
+    };
+    const staticNode = createNodeFromType("static", staticPos);
+
+    // Compute sets and helpers
+    const selectedSet = new Set(ordered.map((n) => n.id));
+    const startNode = nodes.find((n) => n.type === "start");
+    const startId = startNode?.id;
+
+    // Split edges
+    const fullyOutside = edges.filter(
+      (e) => !selectedSet.has(e.source) && !selectedSet.has(e.target)
+    );
+    const incomingToSel = edges.filter(
+      (e) => !selectedSet.has(e.source) && selectedSet.has(e.target)
+    );
+    const outgoingFromSel = edges.filter(
+      (e) => selectedSet.has(e.source) && !selectedSet.has(e.target)
+    );
+
+    // Rebuild edges:
+    const newEdges = [...fullyOutside];
+
+    // 1) Start -> Static (always if start exists)
+    if (startId) {
+      const candidate = { source: startId, target: staticNode.id };
+      // optional guard with validateEdgeDraft
+      if (
+        !validateEdgeDraft ||
+        validateEdgeDraft(candidate, nodes.concat(staticNode))
+      ) {
+        newEdges.push({ ...candidate });
+      }
+    }
+
+    // 2) Static -> first field
+    newEdges.push({ source: staticNode.id, target: first.id });
+
+    // 3) Chain among ordered fields
+    for (let i = 0; i < ordered.length - 1; i++) {
+      newEdges.push({ source: ordered[i].id, target: ordered[i + 1].id });
+    }
+
+    // 4) Re-route incoming edges:
+    //    - From Start: go to Static
+    //    - From others: go to the first field of the section
+    for (const e of incomingToSel) {
+      if (startId && e.source === startId) {
+        newEdges.push({ source: e.source, target: staticNode.id });
+      } else {
+        newEdges.push({ source: e.source, target: first.id });
+      }
+    }
+
+    // 5) Re-attach outgoing edges from any selected field to the outside,
+    //    but now originating from the LAST field of the section.
+    //    (dedupe targets)
+    const outTargets = Array.from(
+      new Set(outgoingFromSel.map((e) => e.target))
+    );
+    for (const tgt of outTargets) {
+      newEdges.push({ source: last.id, target: tgt });
+    }
+
+    setNodes((nds) => nds.concat(staticNode));
+    setEdges((eds) => uniqEdges(newEdges));
+
+    // Optional: focus the new Static
+    setSelectedIds([staticNode.id]);
+    setSelectedId(staticNode.id);
+  }, [selectedIds, nodes, edges, setNodes, setEdges]);
 
   return (
     <div className="h-full w-full flex">
@@ -520,6 +585,7 @@ function BuilderInner({ onExport, onCopy }) {
           nodeTypes={fieldNodeTypes}
           onDrop={onDrop}
           onDragOver={onDragOver}
+          isValidConnection={isValidConnection}
           fitView
           minZoom={0.25}
           maxZoom={1.75}
@@ -527,16 +593,6 @@ function BuilderInner({ onExport, onCopy }) {
           <Background />
           <MiniMap pannable zoomable />
           <Controls showInteractive={false} />
-
-          {/* Hints */}
-          <Panel
-            position="top-left"
-            className="pointer-events-none bg-transparent"
-          >
-            <div className="pointer-events-auto p-2 text-xs bg-white/80 rounded-md shadow">
-              Connect <b>Start → fields → End → Submit</b> (linear).
-            </div>
-          </Panel>
 
           {/* Order Inspector */}
           <Panel
@@ -642,6 +698,30 @@ function BuilderInner({ onExport, onCopy }) {
               {validationMsg}
             </Panel>
           )}
+
+          <Panel
+            position="top-left"
+            className="bg-white/90 rounded-md shadow p-2 text-xs"
+          >
+            <div className="flex items-center gap-2">
+              <button
+                className={`px-2 py-1 rounded-md ${
+                  selectedIds.length
+                    ? "bg-blue-600 text-white hover:bg-blue-700"
+                    : "bg-gray-200 text-gray-500"
+                }`}
+                disabled={!selectedIds.length}
+                title="Wrap selected fields into a new Static (section) and auto-wire"
+                onClick={makeSection}
+                type="button"
+              >
+                Make Section ({selectedIds.length})
+              </button>
+              <span className="text-[11px] text-gray-600 hidden sm:inline">
+                Select one or more fields (non-static), then click
+              </span>
+            </div>
+          </Panel>
         </ReactFlow>
       </div>
       <PropertiesPanel
